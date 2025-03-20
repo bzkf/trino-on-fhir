@@ -1,0 +1,42 @@
+name: test
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Prepare
+        env:
+          POPULATION_SIZE: 5000
+        run: |
+          curl -LO https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
+          curl -LO https://repo1.maven.org/maven2/io/trino/trino-cli/472/trino-cli-472-executable.jar
+          java -jar synthea-with-dependencies.jar -s 20250306 -cs 20250306 -r 20250306 -p "${POPULATION_SIZE}" -c config/synthea.properties --exporter.baseDirectory="./synthea/output/bulk" --exporter.fhir.bulk_data="true"
+
+      - name: Start
+        run: |
+          docker compose up warehousekeeper --attach-dependencies --abort-on-container-failure
+          docker compose stop pathling
+
+      - name: Run queries
+        run: |
+          java -jar trino-cli-472-executable.jar http://localhost:8080 -f sql/observations-by-code.sql
+          java -jar trino-cli-472-executable.jar http://localhost:8080 -f sql/hemoglobin-count.sql
+          java -jar trino-cli-472-executable.jar http://localhost:8080 -f sql/diabetes-extract.sql
+          java -jar trino-cli-472-executable.jar http://localhost:8080 -f sql/table-counts.sql
